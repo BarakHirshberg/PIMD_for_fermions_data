@@ -1,0 +1,159 @@
+#Unites and dims
+units electron
+dimension 2
+boundary p p p 
+atom_style charge
+atom_modify sort 0 0.0 map yes
+
+#User-defined parameters
+
+#Time step is in femtoseconds
+timestep 1
+#timestep 0.5
+#Define temperature in Kelvin 
+variable Temp equal 59.18304242090248
+#Define force constant
+variable k equal 2.45887843714982e-9
+#Number of beads
+variable Nbeads equal 8.0
+variable ibead uloop ${Nbeads} pad
+variable seed equal 1944812
+
+#Create box and atoms. All distances are in Bohr
+region box block -1500 1500 -1500 1500 -1500 1500
+create_box 1 box
+create_atoms 1 single 0 0 0
+create_atoms 1 single 0 500 0
+create_atoms 1 single 500 0 0
+create_atoms 1 single 500 500 0
+create_atoms 1 single 0 -500 0
+create_atoms 1 single -500 0 0
+#create_atoms 1 single -500 -500 0
+#create_atoms 1 single 0 1000 0
+#create_atoms 1 single 1000 0 0
+#create_atoms 1 single 1000 1000 0
+#create_atoms 1 random 6 ${seed}${ibead} NULL
+
+#region small_box block -50 50 -50 50 -50 50
+#create_atoms 1 random 6 ${seed}${ibead} small_box
+
+#variable a loop 6
+#label loop
+#variable x equal 100.0*v_a
+#create_atoms 1 single ${x} 0.0 0.0
+#next a
+#jump SELF loop
+
+#Mass is in amu. This is 0.07* electron mass in amu
+mass 1 3.84005936216e-05
+set type 1 charge -1.0
+dielectric 19.325879414427995  #GaAs is 12.5 but Johans's gammaC is 0.9 so 12.5/0.9 = 13.89. 14.866061088021533 is for Dornheim lambda=1.3
+
+variable gauss_height equal 0.0
+variable gauss_sigma equal 25.82529919345316
+#read_restart restart
+
+#Non-interacting particles
+#pair_style      none
+#communicate single cutoff 1.5
+#pair_coeff * * 1.0 0.0 ${sigma}
+#pair_coeff * * 0.1 0.0 3.0
+pair_style hybrid/overlay gauss/cut 1500.0 coul/cut 1500.0
+#pair_style hybrid/overlay gauss/cut 100.0 coul/debye 0.01 1500.0
+#pair_style hybrid/overlay gauss/cut 100.0 coul/cut 1500.0 coul/debye 0.001 1500.0
+#pair_style gauss/cut 100.0
+#pair_coeff * * ${gauss_height} 0.0 ${gauss_sigma} 
+
+pair_coeff * * gauss/cut ${gauss_height} 0.0 ${gauss_sigma} 
+pair_coeff * * coul/cut 
+#pair_coeff * * coul/debye
+variable scale equal -1.0
+
+#fix sub all adapt 0 pair coul/debye scale * * v_scale scale yes 
+
+compute gauss all pair gauss/cut
+compute coul all pair coul/cut
+#compute coul all pair coul/debye
+
+#compute coul_sr all pair coul/debye
+#compute coul_tot all pair coul/cut
+#variable coul equal c_coul_tot+c_coul_sr
+
+#Initialize velocities
+#velocity all create ${Temp} 87287 
+velocity all create ${Temp} ${seed}${ibead} mom yes rot yes dist gaussian
+
+#Define variables for force constants
+variable fx atom -v_k*x
+variable fy atom -v_k*y
+#variable fz atom -v_k*z
+#variable harm3d atom 0.5*v_k*(x^2+y^2+z^2)
+variable harm2d atom 0.5*v_k*(x^2+y^2)
+#variable harm1d atom 0.5*v_k*(x^2)
+#I DIVIDE HERE BY NBEADS SINCE THE VIRIAL IMPLEMENTED IN LAMMPS ALREADY DIVIDES BY NBEADS
+#SO NOW ALL I NEED TO DO IS TO SUM FOR THE ESTIMATOR, DIRECTLY COMPARED TO THE OTHER VIRIAL
+variable trapvir atom -0.5*(x*v_fx+y*v_fy)/v_Nbeads
+compute trapvir all reduce sum v_trapvir
+compute trap all reduce sum v_harm2d
+
+#Add harmonic external force
+#fix harm all addforce v_fx v_fy v_fz energy v_harm3d
+fix harm all addforce v_fx v_fy 0.0 energy v_harm2d
+#Add harmonic potential energy to total energy and potential energy
+fix_modify harm energy yes
+
+#write trajectory
+#dump id all atom 1000 traj.lmpstrj
+
+#restart 1000 restartA restartB
+#restart 1000 system_${ibead}.restart1 system_${ibead}.restart2
+
+#dump xyz files
+#dump 1 all xyz 1000 dump.xyz
+#dump forces all custom 100 f_${ibead}.xyz fx fy fz
+dump xyz all xyz 100 system_${ibead}.xyz
+#variable 1 atom "(fx^2 + fy^2 + fz^2)"
+#dump fnorm all custom 100 fn_${ibead}.xyz v_1
+
+
+# For PLUMED2
+#fix 22 all plumed plumedfile plumed.dat outfile plumed.out
+
+#fix 22 all nve
+#fix 12 all pimd2 method pimd fmass 1.0 sp 1.0 temp ${Temp} nhc 4
+#fix 14 all gle 6 ${Temp} ${Temp} 123321${ibead} smart.A
+variable nhc equal 4
+fix 12 all pimdb method nmpimd fmass 1.0 sp 1.0 temp ${Temp} nhc ${nhc}
+variable newvir equal f_12[3]
+
+#print thermodynamics info to log file every n steps
+#thermo_style custom step time temp ke pe c_trap etotal fmax fnorm v_newvir c_trapvir c_gauss v_coul c_coul_tot c_coul_sr
+thermo_style custom step time temp ke pe c_trap etotal fmax fnorm v_newvir c_trapvir c_gauss c_coul 
+#thermo_style custom step time temp ke pe c_trap etotal fmax fnorm v_newvir c_trapvir c_gauss 
+#thermo_style custom step time temp ke pe c_trap etotal fmax fnorm v_newvir c_trapvir  
+thermo 100
+
+#compute 1 all property/local natom1 
+#compute 2 all property/local natom2
+#dump 4 all local 100 neigh_${ibead}.xyz c_1 c_2
+
+#
+fix 5 all enforce2d
+
+#variable a loop 20
+#label loop
+#fix 12 all pimdb method nmpimd fmass 1.0 sp 1.0 temp ${Temp} nhc 4
+#run 10000000
+#write_data data_${a}.${ibead}
+#unfix 12
+#next a
+#jump SELF loop
+
+run             75000000
+write_data data.${ibead}
+#write_restart restart_metad
+
+
+
+
+
