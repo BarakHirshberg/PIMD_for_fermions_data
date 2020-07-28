@@ -1,5 +1,6 @@
 # PIMD_for_fermions_data
-Raw data for arXiv:2003.10317, published in https://doi.org/10.1063/5.0008720
+Raw data for arXiv:2003.10317, published in https://doi.org/10.1063/5.0008720.
+Essentially the same code as in the PNAS paper but with a virial estimator for the kinetic energy implemented in the compute.
 
 NOTE: found a minor bug in error estimation in the python script.
 The reported error is too large by a factor of (Neff-1)^(1/4), which is smaller than 2 for all cases considered.
